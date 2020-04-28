@@ -30,7 +30,7 @@ from .app import SS2App
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
-from ryu.controller.handler import set_ev_cls
+from ryu.controller.handler import set_ev_cls, set_ev_handler
 from ryu.lib.packet import ethernet, ether_types as ether, packet
 from ryu.ofproto import ofproto_v1_3
 
@@ -49,10 +49,35 @@ class SS2Core(app_manager.RyuApp, SS2App):
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         "Handle new datapaths attaching to Ryu"
+        
+        datapath = ev.msg.datapath
+        ofproto_parser = datapath.ofproto_parser
+        tables_feature_request = ofproto_parser.OFPTableFeaturesStatsRequest(
+            datapath, 0)
+        datapath.send_msg(tables_feature_request)
 
-        msgs = self.add_datapath(ev.msg.datapath)
 
-        self.send_msgs(ev.msg.datapath, msgs)
+    @set_ev_cls(ofp_event.OFPTableFeaturesStatsReply, MAIN_DISPATCHER)
+    def tables_feature_reply_handler(self, ev):
+
+        msg = ev.msg
+        datapath = ev.msg.datapath
+
+        # body             List of ``OFPTableFeaturesStats`` instance
+        if msg.flags & datapath.ofproto.OFPMPF_REPLY_MORE:
+            return
+
+        self.logger.info('Received features of tables from DP %d', datapath.id)
+        
+        self.logger.info('acl_tbl_id=%d, l2_switch_tbl_id=%d, eth_src_tbl_id=%d, eth_dst_tbl_id=%d',
+                         self.config.table_acl, self.config.table_l2_switch,
+                         self.config.table_eth_src, self.config.table_eth_dst)
+
+        msgs = self.add_datapath(datapath)
+        # Add a request for tables info (append to msgs)
+
+        self.send_msgs(datapath, msgs)
+
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
